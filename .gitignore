@@ -1,0 +1,30 @@
+# Oh-my-pi
+/.omp/*
+!/.omp/README.md
+!/.omp/agent
+/.omp/agent/*
+!/.omp/agent/config.yml
+!/.omp/agent/mcp.json
+!/.omp/agent/commands
+!/.omp/agent/agents
+
+# omp runtime state (covered by the whitelist above; explicit for safety)
+logs/
+daemons/
+gpu_cache*
+*.db
+*.db-shm
+*.db-wal
+
+# Secrets — never tracked, even if the whitelist above is loosened.
+# omp stores credentials in ~/.omp (auth storage / keychain), not here;
+# these patterns are a safety net.
+auth.json
+auth*.json
+credentials*
+install-id
+.env
+.env.*
+*.pem
+*.key
+secrets*

@@ -1,0 +1,130 @@
+#!/usr/bin/env sh
+# Launch an isolated /feature run in its own git worktree, so multiple
+# flows can run in parallel on the same repo without touching each other.
+#
+# Run with no arguments (or -h/--help) for usage.
+# Run from anywhere inside the target repo. Creates ../<repo>-<ticket>/
+# on branch omp/<ticket> (forked from the current HEAD, or from base=<branch>
+# for stacked PRs), then starts omp there with the /feature prompt.
+# Clean up finished worktrees with: git worktree remove <path>
+set -eu
+
+usage() {
+  cat <<'EOF'
+usage: start-ticket <ticket-or-branch> [options...]
+
+Launches the /feature flow in its own git worktree
+(../<repo>-<ticket>/ on branch omp/<ticket>), so multiple
+tickets can run in parallel on the same repo.
+
+options (any order, all optional):
+  trivial | small | large   effort tier; default: ticket's Linear
+                            label, else small
+  auto                      skip the plan approval gate
+  opus | terra              implementer model variant for subagent
+                            implementation (default: sol)
+  budget=<N>[k|m]           orchestrator token ceiling (goal mode);
+                            default per tier: 300k / 800k / 1.5m.
+                            Reaching it wraps up cleanly; resume below.
+  time=<dur>                wall-clock cap for the whole session;
+                            tier defaults: 30m / 1h / 2h; time=0 = none
+  base=<branch>             stack on a local branch: a new omp/<ticket>
+                            worktree forks from it and /feature diffs
+                            against it and opens the PR into it.
+                            Omitted: the worktree forks from the current
+                            HEAD and the PR targets the default branch.
+  resume                    continue the ticket's last omp session in
+                            its worktree; with budget=<N> the goal is
+                            re-created with that ceiling
+
+environment:
+  OMP_TICKET_BUDGET        default budget= override
+  OMP_TICKET_MAX_TIME      override the tier-based time default
+
+examples:
+  start-ticket ABC-123
+  start-ticket ABC-123 trivial
+  start-ticket ABC-123 large auto opus budget=6m
+  start-ticket ABC-124 base=feature/abc-123   # stacked on ABC-123's branch
+  start-ticket ABC-123 resume budget=8m
+  start-ticket ABC-123 resume            # same ceiling again
+
+Reaching a ceiling never loses work: the session and its todo list
+persist. Inside a resumed session you can also raise the budget by
+hand: /goal -> "Adjust budget..." -> "Resume".
+
+cleanup after merge:  git worktree remove ../<repo>-<ticket>
+EOF
+}
+
+case "${1:-}" in
+  -h|--help) usage; exit 0;;
+  "") usage >&2; exit 2;;
+esac
+
+key="$1"; shift
+resume=0
+tier=small
+budget=${OMP_TICKET_BUDGET:-}
+base=
+if [ "${OMP_TICKET_MAX_TIME+x}" = x ]; then
+  maxtime=$OMP_TICKET_MAX_TIME
+  time_override=1
+else
+  maxtime=
+  time_override=0
+fi
+rest=""
+for a in "$@"; do
+  case "$a" in
+    resume|--resume) resume=1;;
+    trivial|small|large) tier=$a; rest="$rest $a";;
+    budget=*|--budget=*) budget="${a#*=}";;
+    time=*|--time=*) maxtime="${a#*=}"; time_override=1;;
+    base=*|--base=*)
+      base="${a#*=}"
+      [ -n "$base" ] || { echo "start-ticket: base must not be empty" >&2; exit 2; };;
+    *) rest="$rest $a";;
+  esac
+done
+if [ "$time_override" = 0 ]; then
+  case "$tier" in
+    trivial) maxtime=30m;;
+    small) maxtime=1h;;
+    large) maxtime=2h;;
+  esac
+fi
+[ -n "$maxtime" ] || { echo "start-ticket: time must not be empty" >&2; exit 2; }
+[ -z "$budget" ] || rest="$rest budget=$budget"
+
+root=$(git rev-parse --show-toplevel)
+if [ -n "$base" ]; then
+  # Local branches only: that is what GitHub accepts as a PR base.
+  git -C "$root" show-ref --verify --quiet "refs/heads/$base" \
+    || { echo "start-ticket: base=$base is not a local branch" >&2; exit 2; }
+  rest="$rest base=$base"
+fi
+slug=$(printf '%s' "$key" | tr '[:upper:]/' '[:lower:]-')
+wt="$(dirname "$root")/$(basename "$root")-$slug"
+branch="omp/$slug"
+
+if [ "$resume" = 1 ]; then
+  if [ ! -d "$wt" ]; then
+    echo "start-ticket: nothing to resume, no worktree at $wt" >&2
+    exit 1
+  fi
+elif [ ! -d "$wt" ]; then
+  # Reuse the branch if it already exists (its tip is left alone), else
+  # create it from base= or, without one, from the current HEAD.
+  git -C "$root" worktree add "$wt" "$branch" 2>/dev/null \
+    || git -C "$root" worktree add -b "$branch" "$wt" ${base:+"$base"}
+fi
+
+set --
+[ "$maxtime" = 0 ] || set -- "--max-time=$maxtime"
+
+echo "worktree: $wt (branch $branch)"
+if [ "$resume" = 1 ]; then
+  exec omp --cwd "$wt" -c "$@" "/feature-resume $key$rest"
+fi
+exec omp --cwd "$wt" "$@" "/feature $key$rest"

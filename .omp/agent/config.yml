@@ -1,0 +1,25 @@
+setupVersion: 2
+modelRoles:
+  smol: openai-codex/gpt-5.6-sol
+  tiny: openai-codex/gpt-5.6-luna
+  implementer: openai-codex/gpt-5.6-sol
+  verifier: anthropic/claude-sonnet-5:medium
+  fixer: openai-codex/gpt-5.6-luna:low
+  default: anthropic/claude-fable-5-1:high
+  advisor: anthropic/claude-opus-5
+  plan: anthropic/claude-fable-5-1
+prewalk:
+  enabled: true
+goal:
+  enabled: true
+  statusInFooter: true
+task:
+  # OMP forces a resumable stop at 1.5x: warn at 80, stop at 120.
+  softRequestBudget: 80
+  softRequestBudgetNotice: true
+  agentModelOverrides:
+    scout: anthropic/claude-sonnet-5:low
+    sonic: "@fixer"
+  enableEffort: true
+spelling:
+  autocomplete: false
