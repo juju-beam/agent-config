@@ -1,25 +1,59 @@
 setupVersion: 2
 modelRoles:
-  smol: openai-codex/gpt-5.6-sol
-  tiny: openai-codex/gpt-5.6-luna
+  plan: anthropic/claude-fable-5-1:high
+  smol: openai-codex/gpt-5.6-sol:medium
   implementer: openai-codex/gpt-5.6-sol
-  verifier: anthropic/claude-sonnet-5:medium
+  verifier: openai-codex/gpt-5.6-terra:medium
   fixer: openai-codex/gpt-5.6-luna:low
-  default: anthropic/claude-fable-5-1:high
-  advisor: anthropic/claude-opus-5
-  plan: anthropic/claude-fable-5-1
+  scout: openai-codex/gpt-5.6-luna:low
+  tiny: openai-codex/gpt-5.6-luna
+  advisor: openai-codex/gpt-5.6-sol
+  default: greenpt/deepseek-v4-flash-0731:high
+retry:
+  fallbackChains:
+    default:
+      - openai-codex/gpt-5.6-sol:high
+    plan:
+      - openai-codex/gpt-5.6-sol:high
+    smol:
+      - anthropic/claude-opus-5:medium
+    implementer:
+      - anthropic/claude-opus-5
+    verifier:
+      - anthropic/claude-sonnet-5:medium
+    fixer:
+      - anthropic/claude-haiku-4-5:low
+    scout:
+      - anthropic/claude-sonnet-5:low
+    tiny:
+      - anthropic/claude-haiku-4-5
+    advisor:
+      - anthropic/claude-opus-5
 prewalk:
-  enabled: true
+  enabled: false
 goal:
   enabled: true
   statusInFooter: true
 task:
-  # OMP forces a resumable stop at 1.5x: warn at 80, stop at 120.
   softRequestBudget: 80
   softRequestBudgetNotice: true
   agentModelOverrides:
-    scout: anthropic/claude-sonnet-5:low
+    scout: "@scout"
     sonic: "@fixer"
   enableEffort: true
+  enableLsp: true
 spelling:
-  autocomplete: false
+  autocomplete: "off"
+dev:
+  autoqaConsent: denied
+tools:
+  approvalMode: yolo
+interruptMode: immediate
+astGrep:
+  enabled: true
+lsp:
+  lazy: false
+codexResets:
+  autoRedeem: "no"
+statusLine:
+  preset: default

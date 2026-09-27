@@ -4,9 +4,12 @@
 !/.omp/agent
 /.omp/agent/*
 !/.omp/agent/config.yml
-!/.omp/agent/mcp.json
 !/.omp/agent/commands
 !/.omp/agent/agents
+!/.omp/agent/extensions
+!/.omp/agent/lsp.json
+!/.omp/agent/AGENTS.md
+!/.omp/agent/skills
 
 # omp runtime state (covered by the whitelist above; explicit for safety)
 logs/
@@ -28,3 +31,9 @@ install-id
 *.pem
 *.key
 secrets*
+
+# locally-install binaries
+bin/linear
+
+# Upstream skill installed per machine by `gh skill install` (see .omp/README.md)
+/.omp/agent/skills/gh-stack/

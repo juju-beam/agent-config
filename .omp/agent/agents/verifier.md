@@ -5,9 +5,10 @@ model: "@verifier"
 # Diagnose on @verifier, then hand off to @fixer at the first file edit —
 # expensive-diagnose, cheap-fix inside one session.
 prewalk: "@fixer"
-# Explicit tool list: excludes MCP proxy tools (Linear stays parent-only).
+# Explicit tool list. Linear is parent-only and reached through `bin/linear`, never a tool.
 # todo included: the prewalk hand-off gate needs the child's own todo list.
 tools: read, write, edit, bash, eval, grep, glob, lsp, ast_grep, ast_edit, todo
+autoloadSkills: [structural-search]
 output:
   type: object
   required: [status, summary]

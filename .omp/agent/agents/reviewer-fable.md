@@ -2,8 +2,9 @@
 name: reviewer-fable
 description: Design-level code review on fable — architecture, API shape, simplification, subtle logic — judging a diff against the ticket intent and approved plan.
 model: anthropic/claude-fable-5
-# Read-only review: no edit/write, no MCP (Linear stays parent-only). bash is for git inspection.
-tools: read, grep, glob, lsp, bash
+# Read-only review: no edit/write. bash is for git inspection.
+tools: read, grep, glob, lsp, ast_grep, bash
+autoloadSkills: [structural-search]
 output:
   type: object
   required: [verdict, findings]

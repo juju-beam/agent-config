@@ -4,8 +4,10 @@
 #
 # Run with no arguments (or -h/--help) for usage.
 # Run from anywhere inside the target repo. Creates ../<repo>-<ticket>/
-# on branch omp/<ticket> (forked from the current HEAD, or from base=<branch>
-# for stacked PRs), then starts omp there with the /feature prompt.
+# on scaffold branch omp/<ticket>, forked from the freshly fetched tip of
+# the default branch (or base=<branch> for stacked PRs), then starts omp
+# there with the /feature prompt, which renames the branch to the issue's
+# Linear branch name.
 # Clean up finished worktrees with: git worktree remove <path>
 set -eu
 
@@ -14,28 +16,38 @@ usage() {
 usage: start-ticket <ticket-or-branch> [options...]
 
 Launches the /feature flow in its own git worktree
-(../<repo>-<ticket>/ on branch omp/<ticket>), so multiple
-tickets can run in parallel on the same repo.
+(../<repo>-<ticket>/, scaffold branch omp/<ticket> that /feature
+renames to the Linear branch name), so multiple tickets can run in
+parallel on the same repo.
 
 options (any order, all optional):
   trivial | small | large   effort tier; default: ticket's Linear
                             label, else small
   auto                      skip the plan approval gate
-  opus | terra              implementer model variant for subagent
-                            implementation (default: sol)
-  budget=<N>[k|m]           orchestrator token ceiling (goal mode);
-                            default per tier: 300k / 800k / 1.5m.
-                            Reaching it wraps up cleanly; resume below.
-  time=<dur>                wall-clock cap for the whole session;
+  model=<shorthand|id>      model for this (parent/orchestrator) session.
+                            Shorthands: fable sol opus terra luna sonnet;
+                            anything else is passed to omp --model as-is
+                            (provider/id, @role, fuzzy). Optional
+                            :<thinking> suffix, e.g. model=fable:high.
+                            Default: your configured default model.
+  budget=<usd>              orchestrator spend ceiling in dollars (list
+                            price incl. subagents), enforced by the
+                            spend-breaker extension; default per tier:
+                            $5 / $15 / $40. At 100% work tools are
+                            blocked, wrap-up tools stay open; raise it
+                            in-session with /budget +N — no restart.
+  time=<dur>                resumable wall-clock allowance for the session;
                             tier defaults: 30m / 1h / 2h; time=0 = none
   base=<branch>             stack on a local branch: a new omp/<ticket>
                             worktree forks from it and /feature diffs
                             against it and opens the PR into it.
-                            Omitted: the worktree forks from the current
-                            HEAD and the PR targets the default branch.
+                            Omitted: the default branch. Either way a new
+                            worktree forks from origin's current tip of
+                            that branch (fetched first), never from a
+                            stale local checkout or the current HEAD.
   resume                    continue the ticket's last omp session in
-                            its worktree; with budget=<N> the goal is
-                            re-created with that ceiling
+                            its worktree with fresh budget and time
+                            allowances
 
 environment:
   OMP_TICKET_BUDGET        default budget= override
@@ -44,14 +56,17 @@ environment:
 examples:
   start-ticket ABC-123
   start-ticket ABC-123 trivial
-  start-ticket ABC-123 large auto opus budget=6m
+  start-ticket ABC-123 large auto budget=60
+  start-ticket ABC-123 model=fable:high        # orchestrate on fable
   start-ticket ABC-124 base=feature/abc-123   # stacked on ABC-123's branch
-  start-ticket ABC-123 resume budget=8m
-  start-ticket ABC-123 resume            # same ceiling again
+  start-ticket ABC-123 resume budget=25
+  start-ticket ABC-123 resume            # tier default again
 
-Reaching a ceiling never loses work: the session and its todo list
-persist. Inside a resumed session you can also raise the budget by
-hand: /goal -> "Adjust budget..." -> "Resume".
+Reaching either cap never loses work: both breakers leave the session,
+its todo list and per-task commits intact, and leave bash/hub/todo/write
+open so the run can commit, open the PR and report. Inside the session,
+`/budget +N` or `/time +30m` raises the corresponding ceiling and the
+agent continues. `resume` is for a closed process or terminal.
 
 cleanup after merge:  git worktree remove ../<repo>-<ticket>
 EOF
@@ -67,6 +82,7 @@ resume=0
 tier=small
 budget=${OMP_TICKET_BUDGET:-}
 base=
+model=
 if [ "${OMP_TICKET_MAX_TIME+x}" = x ]; then
   maxtime=$OMP_TICKET_MAX_TIME
   time_override=1
@@ -81,6 +97,7 @@ for a in "$@"; do
     trivial|small|large) tier=$a; rest="$rest $a";;
     budget=*|--budget=*) budget="${a#*=}";;
     time=*|--time=*) maxtime="${a#*=}"; time_override=1;;
+    model=*|--model=*) model="${a#*=}";;
     base=*|--base=*)
       base="${a#*=}"
       [ -n "$base" ] || { echo "start-ticket: base must not be empty" >&2; exit 2; };;
@@ -95,9 +112,66 @@ if [ "$time_override" = 0 ]; then
   esac
 fi
 [ -n "$maxtime" ] || { echo "start-ticket: time must not be empty" >&2; exit 2; }
+time_value=$(printf '%s' "$maxtime" | awk '
+  /^0$/ { print; next }
+  /^[0-9]+([.][0-9]+)?(ms|s|m|h|d)?$/ {
+    value = $0
+    sub(/(ms|s|m|h|d)$/, "", value)
+    if (value + 0 > 0) print $0
+  }')
+[ -n "$time_value" ] || { echo "start-ticket: time must be 0 or a positive duration, e.g. time=45m, time=2h, or time=3600" >&2; exit 2; }
+export OMP_TICKET_MAX_TIME="$time_value"
 [ -z "$budget" ] || rest="$rest budget=$budget"
 
+# Dollar circuit-breaker: the spend-breaker extension reads this ceiling and,
+# once the session's cost (orchestrator + subagents) passes it, blocks work
+# tools so the run can only commit, report and stop. Without a tier default
+# here the breaker would be inert whenever budget= is omitted.
+if [ -z "$budget" ]; then
+  case "$tier" in
+    trivial) budget=5;;
+    small) budget=15;;
+    large) budget=40;;
+  esac
+fi
+busd=$(printf '%s' "$budget" | awk '
+  /^\$?[0-9]+(\.[0-9]+)?$/ { sub(/^\$/, ""); if ($0 + 0 > 0) print $0; next }
+  { print "" }')
+[ -n "$busd" ] || { echo "start-ticket: budget must be a positive dollar amount, e.g. budget=15 or budget=12.50" >&2; exit 2; }
+export OMP_TICKET_BUDGET_USD="$busd"
+
+# Map friendly shorthands to the concrete ids used in ~/.omp/agent/config.yml,
+# keeping any :<thinking> suffix. Unknown values go to omp --model untouched.
+if [ -n "$model" ]; then
+  case "$model" in
+    *:*) mbase=${model%%:*}; msuffix=":${model#*:}";;
+    *) mbase=$model; msuffix=;;
+  esac
+  case "$mbase" in
+    fable)  mbase=anthropic/claude-fable-5-1;;
+    opus)   mbase=anthropic/claude-opus-5;;
+    sonnet) mbase=anthropic/claude-sonnet-5;;
+    sol)    mbase=openai-codex/gpt-5.6-sol;;
+    terra)  mbase=openai-codex/gpt-5.6-terra;;
+    luna)   mbase=openai-codex/gpt-5.6-luna;;
+  esac
+  model="$mbase$msuffix"
+fi
+
 root=$(git rev-parse --show-toplevel)
+
+# Name of the repository default branch: origin/HEAD, else main/master.
+default_branch() {
+  ref=$(git -C "$root" symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null) \
+    || { git -C "$root" remote set-head origin --auto >/dev/null 2>&1 \
+         && ref=$(git -C "$root" symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null); } \
+    || ref=
+  if [ -n "$ref" ]; then printf '%s\n' "${ref#origin/}"; return 0; fi
+  for b in main master; do
+    git -C "$root" show-ref --verify --quiet "refs/heads/$b" && { printf '%s\n' "$b"; return 0; }
+  done
+  return 1
+}
 if [ -n "$base" ]; then
   # Local branches only: that is what GitHub accepts as a PR base.
   git -C "$root" show-ref --verify --quiet "refs/heads/$base" \
@@ -114,14 +188,50 @@ if [ "$resume" = 1 ]; then
     exit 1
   fi
 elif [ ! -d "$wt" ]; then
-  # Reuse the branch if it already exists (its tip is left alone), else
-  # create it from base= or, without one, from the current HEAD.
-  git -C "$root" worktree add "$wt" "$branch" 2>/dev/null \
-    || git -C "$root" worktree add -b "$branch" "$wt" ${base:+"$base"}
+  if git -C "$root" show-ref --verify --quiet "refs/heads/$branch"; then
+    # Reuse the branch (its tip is left alone: it may already carry commits
+    # from an earlier run whose worktree was removed).
+    echo "start-ticket: reusing existing branch $branch; not re-forked from a fresh base" >&2
+    git -C "$root" worktree add "$wt" "$branch"
+  else
+    # Fork point is always the base's latest tip as origin has it right now,
+    # so a stale local main (or an unrelated current HEAD) never leaks into
+    # the ticket branch. Without an origin remote, fall back to the local tip.
+    fork=${base:-$(default_branch)} || {
+      echo "start-ticket: cannot determine the default branch (no origin/HEAD, no local main/master)" >&2; exit 2; }
+    if git -C "$root" remote get-url origin >/dev/null 2>&1; then
+      git -C "$root" fetch -q origin "$fork" \
+        || { echo "start-ticket: cannot fetch origin/$fork" >&2; exit 2; }
+      if git -C "$root" show-ref --verify --quiet "refs/heads/$fork" \
+        && ! git -C "$root" merge-base --is-ancestor "$fork" "origin/$fork"; then
+        echo "start-ticket: local $fork has commits not on origin/$fork; push or rebase it before forking a ticket from it" >&2
+        exit 2
+      fi
+      start="origin/$fork"
+    else
+      echo "start-ticket: no origin remote; forking from local $fork" >&2
+      start=$fork
+    fi
+    echo "fork point: $start ($(git -C "$root" rev-parse --short "$start"))"
+    git -C "$root" worktree add --no-track -b "$branch" "$wt" "$start"
+  fi
 fi
 
-set --
-[ "$maxtime" = 0 ] || set -- "--max-time=$maxtime"
+# The /feature flow assumes unattended tool approval regardless of global
+# defaults. Time is enforced by the resumable time-breaker extension instead
+# of omp --max-time, whose expired absolute deadline leaves the TUI unable to
+# process later prompts. Implementation always runs in an implementer subagent,
+# so the orchestrator never hands off models mid-session (no --prewalk).
+set -- --auto-approve
+[ -z "$model" ] || set -- "$@" "--model=$model"
+
+# Language servers (ruby-lsp, rubocop) live in the mise-managed Ruby, which
+# the interactive shell only puts on PATH via a cd hook. Resolve the
+# worktree's toolchain here so LSP discovery does not depend on the
+# directory start-ticket was run from.
+if command -v mise >/dev/null 2>&1; then
+  eval "$(mise env -s bash -C "$wt" 2>/dev/null)"
+fi
 
 echo "worktree: $wt (branch $branch)"
 if [ "$resume" = 1 ]; then

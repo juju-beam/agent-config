@@ -1,0 +1,41 @@
+{
+  "servers": {
+    "ruby-lsp": {
+      "initOptions": {
+        "formatter": "rubocop",
+        "linters": ["rubocop"],
+        "indexing": {
+          "excludedPatterns": ["vendor/**/*.rb", "db/migrate/**/*.rb"]
+        }
+      }
+    },
+    "eslint": {
+      "settings": {
+        "": {
+          "validate": "on",
+          "packageManager": "pnpm",
+          "useESLintClass": false,
+          "experimental": { "useFlatConfig": false },
+          "codeActionOnSave": { "enable": false, "mode": "all" },
+          "format": false,
+          "quiet": false,
+          "onIgnoredFiles": "off",
+          "options": {},
+          "rulesCustomizations": [],
+          "run": "onSave",
+          "problems": { "shortenToSingleLine": false },
+          "nodePath": null,
+          "codeAction": {
+            "disableRuleComment": { "enable": true, "location": "separateLine" },
+            "showDocumentation": { "enable": true }
+          }
+        }
+      }
+    },
+    "solargraph": { "disabled": true },
+    "rubocop": { "disabled": true },
+    "tailwindcss": { "disabled": true },
+    "clangd": { "disabled": true }
+  },
+  "idleTimeoutMs": 600000
+}

@@ -3,8 +3,9 @@ name: reviewer-sol
 description: Implementation-level code review on sol — correctness, edge cases, error paths — judging a diff against the ticket intent and approved plan.
 # Prioritized: falls back to opus (company API) when the Codex window is exhausted or unreachable.
 model: ["openai-codex/gpt-5.6-sol", "anthropic/claude-opus-5"]
-# Read-only review: no edit/write, no MCP (Linear stays parent-only). bash is for git inspection.
-tools: read, grep, glob, lsp, bash
+# Read-only review: no edit/write. bash is for git inspection.
+tools: read, grep, glob, lsp, ast_grep, bash
+autoloadSkills: [structural-search]
 output:
   type: object
   required: [verdict, findings]
